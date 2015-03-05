@@ -120,40 +120,42 @@ module Flapjack
         end
       end
 
-      def get_consul_data(service_name)
+      def get_consul_service_data(service_name)
         # TODO input from service
         Flapjack.load_json(File.read(service_name))
       rescue
         puts "Failed to retrieve Consul data for '#{service_name}' service"
       end
 
-      def consul_to_flapjack_data(consul_data)
-        state = (consul_data['Status'] == 'passing') ? 'ok' : 'warning'
-        summary = "#{consul_data['ServiceName']}: #{consul_data['Name']}"
-        details = "Output: '#{consul_data['Output']}'\nNotes: '#{consul_data['Notes']}'"
+      def consul_to_flapjack_data(consul_check)
+        state = (consul_check['Status'] == 'passing') ? 'ok' : 'warning'
+        summary = "#{consul_check['ServiceName']}: #{consul_check['Name']}"
+        details = "Output: '#{consul_check['Output']}'\nNotes: '#{consul_check['Notes']}'"
 
         {
            'type'    => 'service',
            'state'   => state,
-           'entity'  => consul_data['Node'],
-           'check'   => consul_data['CheckID'],
+           'check'   => consul_check['CheckID'],
+           'entity'  => consul_check['Node'],
            'summary' => summary,
            'details' => details
         }
       rescue
-        puts "Failed to collect necessary Flapjack event data from Consul data: #{consul_data}"
+        puts "Failed to collect necessary Flapjack event data from Consul check: #{consul_check}"
       end
 
-      def consul # TODO error handling
-        consul_data = get_consul_data(@options[:service])
-        flapjack_event_data = consul_to_flapjack_data(consul_data)
+      def consul
+        consul_service_data = get_consul_service_data(@options[:service])
+        raw_flapjack_events = consul_service_data.map { |entry| consul_to_flapjack_data(entry) }
 
-        errors = Flapjack::Data::Event.validation_errors_for_hash(flapjack_event_data)
-        if errors.empty?
-          Flapjack::Data::Event.add(flapjack_event_data, :redis => redis)
-          puts "Enqueued event data, #{flapjack_event_data.inspect}"
-        else
-          puts "Invalid event data received, #{errors.join(', ')} #{flapjack_event_data.inspect}"
+        raw_flapjack_events.each do |raw_flapjack_event|
+          errors = Flapjack::Data::Event.validation_errors_for_hash(raw_flapjack_event)
+          if errors.empty?
+            Flapjack::Data::Event.add(raw_flapjack_event, :redis => redis)
+            puts "Enqueued event data, #{raw_flapjack_event.inspect}"
+          else
+            puts "Invalid event data received, #{errors.join(', ')} #{raw_flapjack_event.inspect}"
+          end
         end
 
         puts "Done."

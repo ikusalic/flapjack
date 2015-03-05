@@ -1,5 +1,8 @@
 #!/usr/bin/env ruby
 
+require 'net/http'
+require 'uri'
+
 require 'dante'
 require 'redis'
 require 'hiredis'
@@ -121,8 +124,10 @@ module Flapjack
       end
 
       def get_consul_service_data(service_name)
-        # TODO input from service
-        Flapjack.load_json(File.read(service_name))
+        # TODO configurable
+        uri = URI.parse("http://devstack:8500/v1/health/checks/#{service_name}")
+        response = Net::HTTP.get_response(uri)
+        Flapjack.load_json(response.body)
       rescue
         puts "Failed to retrieve Consul data for '#{service_name}' service"
       end

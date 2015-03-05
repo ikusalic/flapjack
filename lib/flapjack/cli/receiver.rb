@@ -120,6 +120,10 @@ module Flapjack
         end
       end
 
+      def consul
+        json_feeder(:from => @options[:service])
+      end
+
       def json
         json_feeder(:from => @options[:from])
       end
@@ -637,6 +641,17 @@ command :receiver do |receiver|
       end
     end
 
+  end
+
+  receiver.desc 'Consul receiver'
+  receiver.command :consul do |consul|
+
+    consul.flag [:s, 'service'],     :desc => 'Name of the service to check'
+
+    consul.action do |global_options,options,args|
+      receiver = Flapjack::CLI::Receiver.new(global_options, options)
+      receiver.consul
+    end
   end
 
   receiver.desc 'JSON receiver'

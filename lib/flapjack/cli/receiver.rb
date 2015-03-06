@@ -76,7 +76,7 @@ module Flapjack
           runner(@options[:type]).execute(:daemonize => @options[:daemonize]) do
             begin
               File.umask(main_umask) if @options[:daemonize]
-              main(:fifo => @options[:fifo], :type => @options[:type])
+              main(:fifo => @options[:fifo], :service => @options[:service], :type => @options[:type])
             rescue Exception => e
               p e.message
               puts e.backtrace.join("\n")
@@ -104,7 +104,7 @@ module Flapjack
         runner(@options[:type]).execute(:daemonize => true, :restart => true) do
           begin
             File.umask(main_umask)
-            main(:fifo => @options[:fifo], :type => @options[:type])
+              main(:fifo => @options[:fifo], :service => @options[:service], :type => @options[:type])
           rescue Exception => e
             p e.message
             puts e.backtrace.join("\n")
@@ -125,6 +125,7 @@ module Flapjack
 
       def get_consul_service_data(service_name)
         # TODO configurable
+        service_name = 'myservice'  # TODEL; TODO should come from config
         uri = URI.parse("http://devstack:8500/v1/health/checks/#{service_name}")
         response = Net::HTTP.get_response(uri)
         Flapjack.load_json(response.body)
@@ -149,8 +150,8 @@ module Flapjack
         puts "Failed to collect necessary Flapjack event data from Consul check: #{consul_check}"
       end
 
-      def consul
-        consul_service_data = get_consul_service_data(@options[:service])
+      def consul(service = @options[:service])
+        consul_service_data = get_consul_service_data(service)
         raw_flapjack_events = consul_service_data.map { |entry| consul_to_flapjack_data(entry) }
 
         raw_flapjack_events.each do |raw_flapjack_event|
@@ -296,11 +297,26 @@ module Flapjack
       end
 
       def main(opts)
+        if opts[:type] == 'consul'
+          main_consul(opts)
+        else
+          main_fifo(opts)
+        end
+      end
+
+      def main_fifo(opts)
         fifo = opts[:fifo]
         while true
           process_input(:fifo => fifo, :type => opts[:type])
           puts "Whoops with the fifo, restarting main loop in 10 seconds"
           sleep 10
+        end
+      end
+
+      def main_consul(opts)
+        while true
+          consul(opts[:service])
+          sleep 30  # TODO to config config
         end
       end
 
@@ -330,7 +346,7 @@ module Flapjack
       def get_pid
         IO.read(pidfile).chomp.to_i
       rescue StandardError
-        #pid = nil  # TODO IVAN
+        #pid = nil  # TODO uncomment? IVAN
       end
 
       class EventFeedHandler < Oj::ScHandler
@@ -688,12 +704,72 @@ command :receiver do |receiver|
   receiver.desc 'Consul receiver'
   receiver.command :consul do |consul|
 
-    consul.flag [:s, 'service'],     :desc => 'Name of the service to check'
+    consul.flag   [:s, 'service'],   :desc => 'Name of the service to check'
 
     consul.action do |global_options,options,args|
       receiver = Flapjack::CLI::Receiver.new(global_options, options)
       receiver.consul
     end
+
+    consul.command :start do |start|
+
+      start.switch [:d, 'daemonize'], :desc => 'Daemonize',
+        :default_value => true
+
+      start.flag   [:s, 'service'],   :desc => 'Name of the service to check'
+
+      start.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
+
+      start.flag   [:l, 'logfile'],   :desc => 'PATH of the logfile to write to'
+
+      start.action do |global_options,options,args|
+        options.merge!(:type => 'consul')
+        receiver = Flapjack::CLI::Receiver.new(global_options, options)
+        receiver.start
+      end
+    end
+
+    consul.command :stop do |stop|
+
+      stop.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
+
+      stop.flag   [:l, 'logfile'],   :desc => 'PATH of the logfile to write to'
+
+      stop.action do |global_options,options,args|
+        options.merge!(:type => 'consul')
+        receiver = Flapjack::CLI::Receiver.new(global_options, options)
+        receiver.stop
+      end
+    end
+
+    consul.command :restart do |restart|
+
+      restart.flag   [:s, 'service'],   :desc => 'Name of the service to check'
+
+      restart.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
+
+      restart.flag   [:l, 'logfile'],   :desc => 'PATH of the logfile to write to'
+
+      restart.action do |global_options,options,args|
+        options.merge!(:type => 'consul')
+        receiver = Flapjack::CLI::Receiver.new(global_options, options)
+        receiver.restart
+      end
+    end
+
+    consul.command :status do |status|
+
+      status.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
+
+      status.flag   [:l, 'logfile'],   :desc => 'PATH of the logfile to write to'
+
+      status.action do |global_options,options,args|
+        options.merge!(:type => 'consul')
+        receiver = Flapjack::CLI::Receiver.new(global_options, options)
+        receiver.status
+      end
+    end
+
   end
 
   receiver.desc 'JSON receiver'

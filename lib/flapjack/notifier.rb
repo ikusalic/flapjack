@@ -18,6 +18,7 @@ require 'flapjack/gateways/sms_messagenet'
 require 'flapjack/gateways/sms_twilio'
 require 'flapjack/gateways/sms_nexmo'
 require 'flapjack/gateways/aws_sns'
+require 'flapjack/gateways/rivermuse'
 
 module Flapjack
 

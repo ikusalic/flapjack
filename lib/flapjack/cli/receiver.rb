@@ -155,19 +155,29 @@ module Flapjack
 
       def consul_to_flapjack_event(consul_check)
         state = (consul_check['Status'] == 'passing') ? 'ok' : 'warning'
-        summary = "#{consul_check['ServiceName']}: #{consul_check['Name']}"
+        summary = "#{consul_check['ServiceName']}: #{consul_check['Name']} on #{consul_check['Node']}"
         details = "Output: '#{consul_check['Output']}'\nNotes: '#{consul_check['Notes']}'"
 
         {
            'type'    => 'service',
            'state'   => state,
            'check'   => consul_check['CheckID'],
-           'entity'  => consul_check['Node'],
+           'entity'  => consul_check['ServiceName'],
            'summary' => summary,
            'details' => details
         }
       rescue
         puts "Failed to collect necessary Flapjack event data from Consul check: #{consul_check}"
+      end
+
+      def add_consul_event(raw_event)
+        errors = Flapjack::Data::Event.validation_errors_for_hash(raw_event)
+        if errors.empty?
+          Flapjack::Data::Event.add(raw_event, :redis => redis)
+          puts "Enqueued event data, #{raw_event.inspect}"
+        else
+          puts "Invalid event data received, #{errors.join(', ')} #{raw_event.inspect}"
+        end
       end
 
       def consul(endpoint = @options[:endpoint])
@@ -176,15 +186,7 @@ module Flapjack
             consul_service_data(service_endpoint, service_name)
             .map { |entry| consul_to_flapjack_event(entry) }
 
-          raw_flapjack_events.each do |raw_flapjack_event|
-            errors = Flapjack::Data::Event.validation_errors_for_hash(raw_flapjack_event)
-            if errors.empty?
-              Flapjack::Data::Event.add(raw_flapjack_event, :redis => redis)
-              puts "Enqueued event data, #{raw_flapjack_event.inspect}"
-            else
-              puts "Invalid event data received, #{errors.join(', ')} #{raw_flapjack_event.inspect}"
-            end
-          end
+          raw_flapjack_events.each { |event| add_consul_event(event) }
         end
 
         puts "Done."
@@ -369,7 +371,7 @@ module Flapjack
       def get_pid
         IO.read(pidfile).chomp.to_i
       rescue StandardError
-        #pid = nil  # TODO uncomment? IVAN
+        pid = nil
       end
 
       class EventFeedHandler < Oj::ScHandler

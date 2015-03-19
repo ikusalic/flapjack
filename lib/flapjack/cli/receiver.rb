@@ -18,6 +18,8 @@ module Flapjack
   module CLI
     class Receiver
 
+      CONSUL_PORT = 8500
+
       def initialize(global_options, options)
         @global_options = global_options
         @options = options
@@ -76,7 +78,7 @@ module Flapjack
           runner(@options[:type]).execute(:daemonize => @options[:daemonize]) do
             begin
               File.umask(main_umask) if @options[:daemonize]
-              main(:fifo => @options[:fifo], :service => @options[:service], :type => @options[:type])
+              main(:fifo => @options[:fifo], :endpoint => @options[:endpoint], :type => @options[:type])
             rescue Exception => e
               p e.message
               puts e.backtrace.join("\n")
@@ -104,7 +106,7 @@ module Flapjack
         runner(@options[:type]).execute(:daemonize => true, :restart => true) do
           begin
             File.umask(main_umask)
-              main(:fifo => @options[:fifo], :service => @options[:service], :type => @options[:type])
+              main(:fifo => @options[:fifo], :endpoint => @options[:endpoint], :type => @options[:type])
           rescue Exception => e
             p e.message
             puts e.backtrace.join("\n")
@@ -123,17 +125,35 @@ module Flapjack
         end
       end
 
-      def get_consul_service_data(service_name)
-        # TODO configurable
-        service_name = 'myservice'  # TODEL; TODO should come from config
-        uri = URI.parse("http://devstack:8500/v1/health/checks/#{service_name}")
+      def remote_json(uri)
         response = Net::HTTP.get_response(uri)
         Flapjack.load_json(response.body)
-      rescue
-        puts "Failed to retrieve Consul data for '#{service_name}' service"
       end
 
-      def consul_to_flapjack_data(consul_check)
+      def consul_services(endpoint)
+        datacenters = remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/catalog/datacenters"))
+
+        nodes = datacenters.reduce([]) do |acc, datacenter|
+          acc + (remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/catalog/nodes?dc=#{datacenter}")) rescue [])
+        end
+
+        services_descriptions = nodes.reduce([]) do |acc, node|
+          services_data = remote_json(URI.parse("http://#{node['Address']}:#{CONSUL_PORT}/v1/catalog/services"))
+          acc + (services_data.keys.map { |service| [node['Address'], service] } rescue [])
+        end
+
+        services_descriptions
+      rescue
+        puts "Failed to discover Consul services for '#{endpoint}' endpoint"
+      end
+
+      def consul_service_data(endpoint, name)
+        remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/health/checks/#{name}"))
+      rescue
+        puts "Failed to retrieve Consul data for '#{name}' service from '#{endpoint}'"
+      end
+
+      def consul_to_flapjack_event(consul_check)
         state = (consul_check['Status'] == 'passing') ? 'ok' : 'warning'
         summary = "#{consul_check['ServiceName']}: #{consul_check['Name']}"
         details = "Output: '#{consul_check['Output']}'\nNotes: '#{consul_check['Notes']}'"
@@ -150,17 +170,20 @@ module Flapjack
         puts "Failed to collect necessary Flapjack event data from Consul check: #{consul_check}"
       end
 
-      def consul(service = @options[:service])
-        consul_service_data = get_consul_service_data(service)
-        raw_flapjack_events = consul_service_data.map { |entry| consul_to_flapjack_data(entry) }
+      def consul(endpoint = @options[:endpoint])
+        consul_services(endpoint).each do |service_endpoint, service_name|
+          raw_flapjack_events =
+            consul_service_data(service_endpoint, service_name)
+            .map { |entry| consul_to_flapjack_event(entry) }
 
-        raw_flapjack_events.each do |raw_flapjack_event|
-          errors = Flapjack::Data::Event.validation_errors_for_hash(raw_flapjack_event)
-          if errors.empty?
-            Flapjack::Data::Event.add(raw_flapjack_event, :redis => redis)
-            puts "Enqueued event data, #{raw_flapjack_event.inspect}"
-          else
-            puts "Invalid event data received, #{errors.join(', ')} #{raw_flapjack_event.inspect}"
+          raw_flapjack_events.each do |raw_flapjack_event|
+            errors = Flapjack::Data::Event.validation_errors_for_hash(raw_flapjack_event)
+            if errors.empty?
+              Flapjack::Data::Event.add(raw_flapjack_event, :redis => redis)
+              puts "Enqueued event data, #{raw_flapjack_event.inspect}"
+            else
+              puts "Invalid event data received, #{errors.join(', ')} #{raw_flapjack_event.inspect}"
+            end
           end
         end
 
@@ -315,7 +338,7 @@ module Flapjack
 
       def main_consul(opts)
         while true
-          consul(opts[:service])
+          consul(opts[:endpoint])
           sleep 30  # TODO to config config
         end
       end
@@ -704,7 +727,7 @@ command :receiver do |receiver|
   receiver.desc 'Consul receiver'
   receiver.command :consul do |consul|
 
-    consul.flag   [:s, 'service'],   :desc => 'Name of the service to check'
+    consul.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
 
     consul.action do |global_options,options,args|
       receiver = Flapjack::CLI::Receiver.new(global_options, options)
@@ -716,7 +739,7 @@ command :receiver do |receiver|
       start.switch [:d, 'daemonize'], :desc => 'Daemonize',
         :default_value => true
 
-      start.flag   [:s, 'service'],   :desc => 'Name of the service to check'
+      start.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
 
       start.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
 
@@ -744,7 +767,7 @@ command :receiver do |receiver|
 
     consul.command :restart do |restart|
 
-      restart.flag   [:s, 'service'],   :desc => 'Name of the service to check'
+      restart.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
 
       restart.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
 

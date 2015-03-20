@@ -78,7 +78,8 @@ module Flapjack
           runner(@options[:type]).execute(:daemonize => @options[:daemonize]) do
             begin
               File.umask(main_umask) if @options[:daemonize]
-              main(:fifo => @options[:fifo], :endpoint => @options[:endpoint], :type => @options[:type])
+              endpoint = @options[:endpoint] || @config_runner['endpoint']
+              main(:fifo => @options[:fifo], :endpoint => endpoint, :type => @options[:type])
             rescue Exception => e
               p e.message
               puts e.backtrace.join("\n")
@@ -106,7 +107,8 @@ module Flapjack
         runner(@options[:type]).execute(:daemonize => true, :restart => true) do
           begin
             File.umask(main_umask)
-              main(:fifo => @options[:fifo], :endpoint => @options[:endpoint], :type => @options[:type])
+            endpoint = @options[:endpoint] || @config_runner['endpoint']
+            main(:fifo => @options[:fifo], :endpoint => endpoint, :type => @options[:type])
           rescue Exception => e
             p e.message
             puts e.backtrace.join("\n")
@@ -180,7 +182,7 @@ module Flapjack
         end
       end
 
-      def consul(endpoint = @options[:endpoint])
+      def consul(endpoint)
         consul_services(endpoint).each do |service_endpoint, service_name|
           raw_flapjack_events =
             consul_service_data(service_endpoint, service_name)
@@ -341,7 +343,7 @@ module Flapjack
       def main_consul(opts)
         while true
           consul(opts[:endpoint])
-          sleep 30  # TODO to config config
+          sleep(@config_runner['idle_time_in_seconds'] || 30)
         end
       end
 

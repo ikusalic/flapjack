@@ -18,8 +18,6 @@ module Flapjack
   module CLI
     class Receiver
 
-      CONSUL_PORT = 8500
-
       def initialize(global_options, options)
         @global_options = global_options
         @options = options
@@ -78,8 +76,9 @@ module Flapjack
           runner(@options[:type]).execute(:daemonize => @options[:daemonize]) do
             begin
               File.umask(main_umask) if @options[:daemonize]
-              endpoint = @options[:endpoint] || @config_runner['endpoint']
-              main(:fifo => @options[:fifo], :endpoint => endpoint, :type => @options[:type])
+              host = @options[:host] || @config_runner['host']
+              port = @options[:port] || @config_runner['port']
+              main(:fifo => @options[:fifo], :host => host, :port => port, :type => @options[:type])
             rescue Exception => e
               p e.message
               puts e.backtrace.join("\n")
@@ -107,8 +106,9 @@ module Flapjack
         runner(@options[:type]).execute(:daemonize => true, :restart => true) do
           begin
             File.umask(main_umask)
-            endpoint = @options[:endpoint] || @config_runner['endpoint']
-            main(:fifo => @options[:fifo], :endpoint => endpoint, :type => @options[:type])
+            host = @options[:host] || @config_runner['host']
+            port = @options[:port] || @config_runner['port']
+            main(:fifo => @options[:fifo], :host => host, :port => port, :type => @options[:type])
           rescue Exception => e
             p e.message
             puts e.backtrace.join("\n")
@@ -132,27 +132,27 @@ module Flapjack
         Flapjack.load_json(response.body)
       end
 
-      def consul_services(endpoint)
-        datacenters = remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/catalog/datacenters"))
+      def consul_services(host, port)
+        datacenters = remote_json(URI.parse("http://#{host}:#{port}/v1/catalog/datacenters"))
 
         nodes = datacenters.reduce([]) do |acc, datacenter|
-          acc + (remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/catalog/nodes?dc=#{datacenter}")) rescue [])
+          acc + (remote_json(URI.parse("http://#{host}:#{port}/v1/catalog/nodes?dc=#{datacenter}")) rescue [])
         end
 
         services_descriptions = nodes.reduce([]) do |acc, node|
-          services_data = remote_json(URI.parse("http://#{node['Address']}:#{CONSUL_PORT}/v1/catalog/services"))
-          acc + (services_data.keys.map { |service| [node['Address'], service] } rescue [])
+          services_data = remote_json(URI.parse("http://#{node['Address']}:#{port}/v1/catalog/services"))
+          acc + (services_data.keys.map { |service| [node['Address'], port, service] } rescue [])
         end
 
         services_descriptions
       rescue
-        puts "Failed to discover Consul services for '#{endpoint}' endpoint"
+        puts "Failed to discover Consul services for '#{host}:#{port}' endpoint"
       end
 
-      def consul_service_data(endpoint, name)
-        remote_json(URI.parse("http://#{endpoint}:#{CONSUL_PORT}/v1/health/checks/#{name}"))
+      def consul_service_data(host, port, name)
+        remote_json(URI.parse("http://#{host}:#{port}/v1/health/checks/#{name}"))
       rescue
-        puts "Failed to retrieve Consul data for '#{name}' service from '#{endpoint}'"
+        puts "Failed to retrieve Consul data for '#{name}' service from '#{host}:#{port}'"
       end
 
       def consul_to_flapjack_event(consul_check)
@@ -182,10 +182,10 @@ module Flapjack
         end
       end
 
-      def consul(endpoint)
-        consul_services(endpoint).each do |service_endpoint, service_name|
+      def consul(host, port)
+        consul_services(host, port).each do |service_host, service_port, service_name|
           raw_flapjack_events =
-            consul_service_data(service_endpoint, service_name)
+            consul_service_data(service_host, service_port, service_name)
             .map { |entry| consul_to_flapjack_event(entry) }
 
           raw_flapjack_events.each { |event| add_consul_event(event) }
@@ -342,7 +342,7 @@ module Flapjack
 
       def main_consul(opts)
         while true
-          consul(opts[:endpoint])
+          consul(opts[:host], opts[:port])
           sleep(@config_runner['idle_time_in_seconds'] || 30)
         end
       end
@@ -373,7 +373,6 @@ module Flapjack
       def get_pid
         IO.read(pidfile).chomp.to_i
       rescue StandardError
-        pid = nil
       end
 
       class EventFeedHandler < Oj::ScHandler
@@ -731,7 +730,8 @@ command :receiver do |receiver|
   receiver.desc 'Consul receiver'
   receiver.command :consul do |consul|
 
-    consul.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
+    consul.flag   [:H, 'host'],      :desc => 'consul host to discover services'
+    consul.flag   [:P, 'port'],      :desc => 'consul port to discover services'
 
     consul.action do |global_options,options,args|
       receiver = Flapjack::CLI::Receiver.new(global_options, options)
@@ -743,7 +743,8 @@ command :receiver do |receiver|
       start.switch [:d, 'daemonize'], :desc => 'Daemonize',
         :default_value => true
 
-      start.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
+      start.flag   [:H, 'host'],      :desc => 'consul host to discover services'
+      start.flag   [:P, 'port'],      :desc => 'consul port to discover services'
 
       start.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
 
@@ -771,7 +772,8 @@ command :receiver do |receiver|
 
     consul.command :restart do |restart|
 
-      restart.flag   [:e, 'endpoint'],  :desc => 'Consul endpoint to discover services'
+      restart.flag   [:H, 'host'],      :desc => 'consul host to discover services'
+      restart.flag   [:P, 'port'],      :desc => 'consul port to discover services'
 
       restart.flag   [:p, 'pidfile'],   :desc => 'PATH of the pidfile to write to'
 

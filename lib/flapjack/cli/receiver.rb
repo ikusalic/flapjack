@@ -18,6 +18,9 @@ module Flapjack
   module CLI
     class Receiver
 
+      CONSUL_STATE_MAPPING = { 'passing' => 'ok', 'warning' => 'warning', 'critical' => 'critical' }
+      CONSUL_STATE_UNKNOWN = 'unknown'
+
       def initialize(global_options, options)
         @global_options = global_options
         @options = options
@@ -156,7 +159,7 @@ module Flapjack
       end
 
       def consul_to_flapjack_event(consul_check)
-        state = (consul_check['Status'] == 'passing') ? 'ok' : 'warning'
+        state = CONSUL_STATE_MAPPING[consul_check['Status'].downcase] || CONSUL_STATE_UNKNOWN
         summary = "#{consul_check['ServiceName']}: #{consul_check['Name']} on #{consul_check['Node']}"
         details = "Output: '#{consul_check['Output']}'\nNotes: '#{consul_check['Notes']}'"
 

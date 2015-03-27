@@ -47,6 +47,28 @@ module Flapjack
       def start
         queue = @config['queue']
 
+        if @config.nil? || (@config.respond_to?(:empty?) && @config.empty?)
+          @logger.error "Rivermuse config is missing"
+          return
+        end
+
+        @endpoint = @config['endpoint']
+        if @endpoint.nil? || (@endpoint.respond_to?(:empty?) && @endpoint.empty?)
+          @logger.error "Rivermuse endpoint is missing"
+          return
+        end
+        @notification_interval = @config['notification_inerval_in_seconds'] || 60
+
+        contact_id = @config['contact_id']
+        if contact_id.nil? || (contact_id.respond_to?(:empty?) && contact_id.empty?)
+          @logger.error "Rivermuse contact id is missing"
+          return
+        else
+          @contact = find_or_crate_contact(contact_id)
+        end
+
+        attach_all_entities_to_contact()
+
         until @should_quit
           begin
             @logger.debug("rivermuse gateway is going into blpop mode on #{queue}")
@@ -60,24 +82,12 @@ module Flapjack
       end
 
       def deliver(alert)
-        if @config.nil? || (@config.respond_to?(:empty?) && @config.empty?)
-          @logger.error "Rivermuse config is missing"
-          return
-        end
-        default_endpoint = @config['default_endpoint']
-        if default_endpoint.nil? || (default_endpoint.respond_to?(:empty?) && default_endpoint.empty?)
-          @logger.error "Rivermuse default endpoint config value is missing"
-          return
-        end
-
-        endpoint = default_endpoint  # TODO
-
         rivermuse_event = alert_to_rivermuse_event(alert)
 
         events_data = "[#{rivermuse_event.to_json}]"
         encoded_events="events=#{escape(events_data)}"
         headers = {'content-type' => 'application/json'}
-        http = EM::HttpRequest.new(endpoint).post(:head => headers, :body => encoded_events)
+        http = EM::HttpRequest.new(@endpoint).post(:head => headers, :body => encoded_events)
 
         @logger.debug "server response: #{http.response}"
 
@@ -113,6 +123,57 @@ module Flapjack
           }
         rescue
           puts "Failed to collect necessary Rivermuse event data from alert: #{alert}"
+        end
+
+        def find_or_crate_contact(contact_id)
+          if Flapjack::Data::Contact.exists_with_id?(contact_id, :redis => @redis)
+            contact = Flapjack::Data::Contact.find_by_id(contact_id, :redis => @redis)
+            @logger.info "Found Rivermuse contact: #{contact}"
+          else
+            @logger.debug "Creating Rivermuse contact."
+            contact = Flapjack::Data::Contact.add( {
+                'id'         => contact_id,
+                'first_name' => 'Rivermuse',
+                'last_name'  => 'Contact',
+                'media'      => {
+                  'rivermuse' => { 'endpoint' => @endpoint },
+                },
+              },
+              :redis => @redis)
+            @logger.debug "Created Rivermuse contact: #{contact}"
+
+            @logger.debug "Removing existing notification rules for Rivermuse contact."
+            contact.notification_rules.each { |nr| contact.delete_notification_rule(nr) }
+
+            @logger.debug "Creating notification rule."
+            rule = contact.add_notification_rule(
+              {
+                :entities           => [],
+                :regex_entities     => [],
+                :tags               => Set.new([]),
+                :regex_tags         => Set.new([]),
+                :time_restrictions  => [],
+                :warning_media      => ['rivermuse'],
+                :critical_media     => ['rivermuse'],
+                :warning_blackhole  => false,
+                :critical_blackhole => false,
+              }, :logger => @logger
+            )
+            @logger.debug "Added notification rule for Rivermuse contact: #{rule}"
+
+            @logger.debug "Setting rivermuse interval #{@notification_interval} for Rivermuse contact."
+            contact.set_interval_for_media('rivermuse', @notification_interval)
+
+            @logger.info "Created Rivermuse contact: #{contact}"
+          end
+
+          contact
+        end
+
+        def attach_all_entities_to_contact()
+          Flapjack::Data::Entity.all(:redis => @redis).each do |entity|
+            @contact.add_entity(entity)
+          end
         end
 
     end

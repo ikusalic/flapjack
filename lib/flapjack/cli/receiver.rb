@@ -197,6 +197,28 @@ module Flapjack
         puts "Done."
       end
 
+      def consul_update()
+        contact_id = @options[:contactid] || @config_runner['contactid']
+        puts "Attaching all consul services to contact with id '#{contact_id}'"
+
+        if Flapjack::Data::Contact.exists_with_id?(contact_id, :redis => redis)
+          contact = Flapjack::Data::Contact.find_by_id(contact_id, :redis => redis)
+          puts "Found contact '#{contact.name}' with contact id '#{contact_id}'"
+
+          Flapjack::Data::Entity.all(:redis => redis).each do |entity|
+            puts "Attaching entitiy '#{entity.name}' to contact '#{contact.name}'"
+            contact.add_entity(entity)
+          end
+        else
+          puts "Contanct with id: '#{contact_id}' is missing"
+        end
+
+        puts " done."
+      rescue Exception => e
+        p e.message
+        puts e.backtrace.join("\n")
+      end
+
       def json
         json_feeder(:from => @options[:from])
       end
@@ -799,6 +821,19 @@ command :receiver do |receiver|
         options.merge!(:type => 'consul')
         receiver = Flapjack::CLI::Receiver.new(global_options, options)
         receiver.status
+      end
+    end
+
+    consul.command :update do |update|
+
+      update.flag   [:c, 'contactid'], :desc => 'register consul services with the target contact'
+
+      update.flag   [:l, 'logfile'],   :desc => 'PATH of the logfile to write to'
+
+      update.action do |global_options,options,args|
+        options.merge!(:type => 'consul')
+        receiver = Flapjack::CLI::Receiver.new(global_options, options)
+        receiver.consul_update
       end
     end
 

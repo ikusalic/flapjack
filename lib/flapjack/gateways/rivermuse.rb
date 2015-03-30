@@ -57,7 +57,7 @@ module Flapjack
           @logger.error "Rivermuse endpoint is missing"
           return
         end
-        @notification_interval = @config['notification_inerval_in_seconds'] || 60
+        @notification_interval = @config['notification_interval_in_seconds'] || 60
 
         contact_id = @config['contact_id']
         if contact_id.nil? || (contact_id.respond_to?(:empty?) && contact_id.empty?)
@@ -68,6 +68,12 @@ module Flapjack
         end
 
         attach_all_entities_to_contact()
+
+        @source_type = @config['source_type']
+        if @source_type.nil? || (@source_type.respond_to?(:empty?) && @source_type.empty?)
+          @logger.error "Rivermuse source type is missing"
+          return
+        end
 
         until @should_quit
           begin
@@ -118,7 +124,7 @@ module Flapjack
             'service'  => alert.check,
             'severity' => severity,
             'message'  => message,
-            'source'   => 'AWS',  # TODO config
+            'source'   => @source_type,
             'source_instance' => 'SDP'  # TODO
           }
         rescue

@@ -136,18 +136,8 @@ module Flapjack
       end
 
       def consul_services(host, port)
-        datacenters = remote_json(URI.parse("http://#{host}:#{port}/v1/catalog/datacenters"))
-
-        nodes = datacenters.reduce([]) do |acc, datacenter|
-          acc + (remote_json(URI.parse("http://#{host}:#{port}/v1/catalog/nodes?dc=#{datacenter}")) rescue [])
-        end
-
-        services_descriptions = nodes.reduce([]) do |acc, node|
-          services_data = remote_json(URI.parse("http://#{node['Address']}:#{port}/v1/catalog/services"))
-          acc + (services_data.keys.map { |service| [node['Address'], port, service] } rescue [])
-        end
-
-        services_descriptions
+        services_data = remote_json(URI.parse("http://#{host}:#{port}/v1/catalog/services"))
+        services_data.keys
       rescue
         puts "Failed to discover Consul services for '#{host}:#{port}' endpoint"
       end
@@ -186,9 +176,9 @@ module Flapjack
       end
 
       def consul(host, port)
-        consul_services(host, port).each do |service_host, service_port, service_name|
+        consul_services(host, port).each do |service_name|
           raw_flapjack_events =
-            consul_service_data(service_host, service_port, service_name)
+            consul_service_data(host, port, service_name)
             .map { |entry| consul_to_flapjack_event(entry) }
 
           raw_flapjack_events.each { |event| add_consul_event(event) }

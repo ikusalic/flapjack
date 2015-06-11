@@ -180,6 +180,9 @@ module Flapjack
           Flapjack::Data::Entity.all(:redis => @redis).each do |entity|
             @contact.add_entity(entity)
           end
+
+          reason = "Automatically created for new check"
+          Flapjack::Data::EntityCheck.delete_maintenance(:redis => @redis, :reason => reason, :type => "scheduled")
         end
 
     end
